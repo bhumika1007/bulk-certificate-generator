@@ -108,7 +108,6 @@ def test_certificate_retrieval():
 
     job_id = response.json()["job_id"]
 
-    # Get the certificate created for this job
     from app.database import SessionLocal
     from app.models import Certificate
 
@@ -126,3 +125,66 @@ def test_certificate_retrieval():
 
     assert response.status_code == 200
     assert response.headers["content-type"] == "application/pdf"
+
+
+def test_individual_certificate_failure(monkeypatch):
+    from app.services import job_processor
+
+    original_generate = job_processor.generate_certificate
+
+    def fake_generate(
+        certificate_id,
+        recipient_name,
+        event_name,
+        event_date
+    ):
+        if recipient_name == "Fail User":
+            raise Exception("Test generation failure")
+
+        return original_generate(
+            certificate_id,
+            recipient_name,
+            event_name,
+            event_date
+        )
+
+    monkeypatch.setattr(
+        job_processor,
+        "generate_certificate",
+        fake_generate
+    )
+
+    response = client.post(
+        "/api/jobs/",
+        json={
+            "event_name": "Failure Test",
+            "event_date": "2026-10-10",
+            "recipients": [
+                {
+                    "name": "Success User",
+                    "email": "success@example.com"
+                },
+                {
+                    "name": "Fail User",
+                    "email": "fail@example.com"
+                }
+            ]
+        }
+    )
+
+    assert response.status_code == 200
+
+    job_id = response.json()["job_id"]
+
+    status_response = client.get(
+        f"/api/jobs/{job_id}"
+    )
+
+    assert status_response.status_code == 200
+
+    status_data = status_response.json()
+
+    assert status_data["total"] == 2
+    assert status_data["completed"] == 1
+    assert status_data["failed"] == 1
+    assert status_data["status"] == "completed_with_errors"
